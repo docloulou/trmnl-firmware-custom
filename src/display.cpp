@@ -277,6 +277,10 @@ void display_init(void)
     pinMode(10, OUTPUT); // SD card enable (if it's powered down, the SPI bus may be blocked)
     digitalWrite(10, 1);
 #endif // BOARD_SEEED_STICKY
+#ifdef BOARD_XIAO_EPAPER_EE04
+    pinMode(43, OUTPUT);
+    digitalWrite(43, 1); // enable EPD power
+#endif // BOARD_XIAO_EPAPER_EE04
     // Read the panel ID after any board-specific power/CS setup, but before bb_epaper takes over the SPI pins
     panel_rev = get_panel_rev();
     Log_info("Panel ID = 0x%08x\n", panel_rev);
