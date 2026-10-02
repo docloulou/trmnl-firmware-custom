@@ -44,8 +44,30 @@ Chaque dossier contient :
 
    Tu peux aussi passer par le flasheur web https://espressif.github.io/esptool-js/ (Chrome ou Edge) :
    `merged_firmware.bin` à l'adresse `0x0`.
-3. Appuie sur RESET. L'écran affiche le QR code de configuration Wi-Fi : connecte-toi au point
-   d'accès « TRMNL » et renseigne ton Wi-Fi et ton serveur.
+3. Appuie sur RESET, puis configure le Wi-Fi (section suivante).
+
+## Configuration Wi-Fi (portail web)
+
+Au premier démarrage (aucun Wi-Fi enregistré), l'écran affiche « Connect your phone or computer to
+"TRMNL-XXXXXX" Wi-Fi ». Le QR code en haut à droite mène à l'aide en ligne, il ne connecte pas au Wi-Fi.
+
+1. Connecte ton téléphone ou ton ordinateur au réseau ouvert `TRMNL-XXXXXX` (sans mot de passe ;
+   `XXXXXX` vient de l'adresse MAC de la carte).
+2. La page de configuration s'ouvre toute seule. Sinon, ouvre http://4.3.2.1 dans le navigateur.
+3. Choisis ton réseau Wi-Fi (2,4 GHz uniquement sur l'ESP32-S3) et saisis son mot de passe.
+   Pour un serveur perso (BYOS), renseigne son URL dans « Advanced settings » → « API server ».
+   Sinon, laisse le champ vide pour utiliser trmnl.app.
+4. Appuie sur « Connect ». L'appareil redémarre et contacte le serveur.
+
+Le portail reste ouvert 15 minutes. Passé ce délai, l'écran affiche « Wifi Captive Portal timed out »
+et la carte se met en veille : appuie sur le bouton (GPIO5) ou sur RESET pour relancer.
+
+Pour revenir au portail plus tard (changer de Wi-Fi), maintiens le bouton GPIO5 enfoncé entre 5 et
+15 secondes pendant que la carte se réveille. Au-delà de 15 secondes, la carte efface aussi sa clé
+API et se réenregistre auprès du serveur.
+
+Une fois configurée, la carte n'héberge plus de page web : elle dort entre deux rafraîchissements.
+Tout se règle ensuite côté serveur (trmnl.app ou BYOS).
 
 ## Recompiler
 
