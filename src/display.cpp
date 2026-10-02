@@ -37,6 +37,7 @@ const TRMNL_DEVICE device_list[] =
   "m5_papers3",   BB_PANEL_M5PAPERS3,   BB_PANEL_NONE,         0xff,  0xff,  0xff,  3,    0xff,   BATT_ADC,
   "sensoria_c5",  BB_PANEL_SENSORIA_C5, BB_PANEL_NONE,         7,     6,     0,     0xff, 0xff,   BATT_ADC,
   "lilygo_t5pro", BB_PANEL_EPDIY_V7,    BBEP_DISPLAY_ED047TC1, 39,    40,    0,     0xff, 0xff,   BATT_BQ27220,
+  "reterminal_e1003", BB_PANEL_NONE,    BB_PANEL_NONE,         0xff,  0xff,  3,     1,    40,     BATT_ADC, // IT8951 init is in display_init()
   NULL, 0, 0, 0, 0, 0, 0, 0, 0,
 }; // Parallel Eink device list
 
@@ -130,6 +131,7 @@ extern BQ27427 lipo; // Use lipo.[] to interact with the library in an Arduino
 #include <inttypes.h>
 #include <trmnl_log.h>
 #include "png_flip.h"
+#include "bmp.h"
 #include "fonts/nicoclean_8.h"
 #include "fonts/Inter_18.h"
 #include "fonts/Roboto_Black_24.h"
@@ -248,7 +250,7 @@ void hw_config_init(void)
         Log_info("Found device model at index %d\n", i);
         pDevice = (TRMNL_DEVICE *)&device_list[i];
     } else {
-        Log_info("Device name (%s) not found in supported list!", device_list[i].device_name);
+        Log_info("Device name (%s) not found in supported list!", DEVICE_MODEL);
     }
 } /* hw_config_init() */
 
@@ -281,9 +283,15 @@ void display_init(void)
     pinMode(43, OUTPUT);
     digitalWrite(43, 1); // enable EPD power
 #endif // BOARD_XIAO_EPAPER_EE04
-    // Read the panel ID after any board-specific power/CS setup, but before bb_epaper takes over the SPI pins
-    panel_rev = get_panel_rev();
-    Log_info("Panel ID = 0x%08x\n", panel_rev);
+    // Read the panel ID after any board-specific power/CS setup, but before bb_epaper takes over the SPI pins.
+    // Only on the first call: the bit-banged read detaches SCK/MOSI from the SPI peripheral, and
+    // SPI.begin() is a no-op once the bus is running, so a second read would leave the panel unreachable.
+    static bool panel_rev_read = false;
+    if (!panel_rev_read) {
+        panel_rev = get_panel_rev();
+        panel_rev_read = true;
+        Log_info("Panel ID = 0x%08x\n", panel_rev);
+    }
     if (pDevice->epd_mosi_pin != 0 || pDevice->epd_sck_pin != 0) {
         bbep.setPanelType(dpList[pDevice->panel_set][iTempProfile].OneBit); // must be set BEFORE calling initio
         bbep.initIO(pDevice->epd_dc_pin, pDevice->epd_rst_pin, pDevice->epd_busy_pin, pDevice->epd_cs_pin,
@@ -747,159 +755,40 @@ void display_draw_touchbar_indicator(touchbar_side_t side, bool filled)
  * @param y_start Y coordinate to start drawing
  * @param message Text message to draw
  * @param max_width Maximum width in pixels for each line
- * @param font_width Width of a single character in pixels
  * @param color_fg Foreground color
  * @param color_bg Background color
  * @param font Font to use
- * @param is_center_aligned If true, center the text; if false, left-align
  * @return none
  */
 void Paint_DrawMultilineText(UWORD x_start, UWORD y_start, const char *message,
-                             uint16_t max_width, uint16_t font_width,
-                             UWORD color_fg, UWORD color_bg, const void *font,
-                             bool is_center_aligned)
+                             uint16_t max_width, UWORD color_fg, UWORD color_bg, const void *font)
 {
-    BB_FONT_SMALL *pFont = (BB_FONT_SMALL *)font;
-    uint16_t display_width_pixels = max_width;
-    int max_chars_per_line = display_width_pixels / font_width;
-    const int font_height = pFont->height;
-    uint8_t MAX_LINES = 4;
-
-    char lines[MAX_LINES][max_chars_per_line + 1] = {0};
-    uint16_t line_count = 0;
-
-    int text_len = strlen(message);
-    int current_width = 0;
-    int line_index = 0;
-    int line_pos = 0;
-    int word_start = 0;
-    int i = 0;
-    char word_buffer[max_chars_per_line + 1] = {0};
-    int word_length = 0;
+char szTemp[80]; // up to 79 characters per line: getStringBox() copies the string to an 80-byte buffer
+char c, *d, *s = (char *)message;
+BB_RECT rect;
+bool bDone = false;
+int iWidthLimit = (max_width * 3)/4; // don't let the text go all the way to the edges
 
     bbep.setFont(font);
     bbep.setTextColor(color_fg, color_bg);
-
-    bbep.setFont(font);
-    bbep.setTextColor(color_fg, color_bg);
-
-    while (i <= text_len && line_index < MAX_LINES)
-    {
-        word_length = 0;
-        word_start = i;
-
-        // Skip leading spaces
-        while (i < text_len && message[i] == ' ')
-        {
-            i++;
-        }
-        word_start = i;
-
-        // Find end of word or end of text
-        while (i < text_len && message[i] != ' ')
-        {
-            i++;
-        }
-
-        word_length = i - word_start;
-        if (word_length > max_chars_per_line)
-        {
-            word_length = max_chars_per_line; // Truncate if word is too long
-        }
-
-        if (word_length > 0)
-        {
-            strncpy(word_buffer, message + word_start, word_length);
-            word_buffer[word_length] = '\0';
-        }
-        else
-        {
-            i++;
-            continue;
-        }
-
-        int word_width = word_length * font_width;
-
-        // Check if adding the word exceeds max_width
-        if (current_width + word_width + (current_width > 0 ? font_width : 0) <= display_width_pixels)
-        {
-            // Add space before word if not the first word in the line
-            if (current_width > 0 && line_pos < max_chars_per_line - 1)
-            {
-                lines[line_index][line_pos++] = ' ';
-                current_width += font_width;
-            }
-
-            // Add word to current line
-            if (line_pos + word_length <= max_chars_per_line)
-            {
-                strcpy(&lines[line_index][line_pos], word_buffer);
-                line_pos += word_length;
-                current_width += word_width;
-            }
-        }
-        else
-        {
-            // Current line is full, draw it
-            if (line_pos > 0)
-            {
-                lines[line_index][line_pos] = '\0'; // Null-terminate the current line
-                line_index++;
-                line_count++;
-
-                if (line_index >= MAX_LINES)
-                {
-                    break;
-                }
-
-                // Start new line with this word
-                strncpy(lines[line_index], word_buffer, word_length);
-                line_pos = word_length;
-                current_width = word_width;
-            }
-            else
-            {
-                // Single long word case
-                strncpy(lines[line_index], word_buffer, max_chars_per_line);
-                lines[line_index][max_chars_per_line] = '\0';
-                line_index++;
-                line_count++;
-                line_pos = 0;
-                current_width = 0;
-            }
-        }
-
-        // Move to next word
-        if (message[i] == ' ')
-        {
-            i++;
+    d = szTemp;
+    bbep.setCursor(x_start, y_start); // start on the requested col/row
+    while (!bDone) {
+        c = *s++;
+        *d++ = c;
+        d[0] = 0; // test the string length
+        bbep.getStringBox(szTemp, &rect);
+        if (c == 0 || c == '\n' || (c == ' ' && rect.w >= iWidthLimit) || d == &szTemp[sizeof(szTemp) - 1]) {
+            if (c == 0 || s[0] == 0) bDone = true;
+            if (c == ' ' || c == '\n') d[-1] = 0; // don't print the space/newline
+            // Display the current partial string
+            bbep.setCursor(x_start + (max_width - rect.w) / 2, -1);
+            bbep.println(szTemp);
+            d = szTemp;
         }
     }
+} /* Paint_DrawMultilineText() */
 
-    // Store the last line if any
-    if (line_pos > 0 && line_index < MAX_LINES)
-    {
-        lines[line_index][line_pos] = '\0';
-        line_count++;
-    }
-
-    // Draw the lines
-    for (int j = 0; j < line_count; j++)
-    {
-        uint16_t line_width = strlen(lines[j]) * font_width;
-        uint16_t draw_x = x_start;
-
-        if (is_center_aligned)
-        {
-            if (line_width < max_width)
-            {
-                draw_x = x_start + (max_width - line_width) / 2;
-            }
-        }
-        bbep.setCursor(draw_x, y_start + j * (font_height + 5));
-        bbep.print(lines[j]);
-    }
-}
 /**
  * @brief Reduce the bit depth of line of pixels using thresholding (aka simple color mapping)
  * @param Destination bit count (1 or 2)
@@ -1351,9 +1240,9 @@ int png_draw(PNGDRAW *pDraw)
             uint32_t u32Gray0, u32Gray1;
             u32Gray0 = pDraw->pPalette[0] + (pDraw->pPalette[1]<<2) + pDraw->pPalette[2];
             u32Gray1 = pDraw->pPalette[3] + (pDraw->pPalette[4]<<2) + pDraw->pPalette[5];
-          if (u32Gray0 < u32Gray1) {
-            ucInvert = 0xff;
-          }
+            if (u32Gray0 > u32Gray1) { // index 0 is the brighter color; output needs 0 = black
+                ucInvert = 0xff;
+            }
         } else {
             // Reduce the source image to 1-bpp or 2-bpp
             ReduceBpp((pDraw->pUser) ? 2:1, pDraw->iPixelType, pDraw->pPalette, pDraw->pPixels, pTemp, iWidth, pDraw->iBpp);
@@ -1941,6 +1830,7 @@ void display_show_image(uint8_t *image_buffer, int data_size, bool bWait, bool b
         else
         {
          // This work-around is due to a lack of RAM; the correct method would be to use loadBMP()
+            bmpNormalizePolarity(image_buffer, image_buffer+62, (bbep.width() / 8) * bbep.height()); // palette may be [white, black]
             flip_image(image_buffer+62, bbep.width(), bbep.height(), false); // fix bottom-up bitmap images
 #ifdef BB_EPAPER
             bbep.setBuffer(image_buffer+62); // uncompressed 1-bpp bitmap
@@ -2593,39 +2483,19 @@ void display_show_msg(uint8_t *image_buffer, MSG message_type, const char *messa
 }
 
 
-void display_show_msg_qa(uint8_t *image_buffer, const float *voltage, const float *temperature, bool qa_result)
+void display_show_msg_qa(const float *voltage, const float *temperature, bool qa_result)
 {
-    auto width = display_width();
-    auto height = display_height();
-    UWORD Imagesize = ((width % 8 == 0) ? (width / 8) : (width / 8 + 1)) * height;
     BB_RECT rect;
 
     Log_info("display_show_msg start");
     Log_info("maximum_compatibility = %d\n", apiDisplayResult.response.maximum_compatibility);
 #ifdef BB_EPAPER
     bbep.allocBuffer(false);
+    bbep.fillScreen(BBEP_WHITE); // the results go on a blank screen
 #else
     bbep.setMode(BB_MODE_1BPP);
     bbep.setTextColor(BBEP_BLACK, BBEP_WHITE);
 #endif
-    if (*(uint16_t *)image_buffer == BB_BITMAP_MARKER)
-    {
-        // G5 compressed image
-        BB_BITMAP *pBBB = (BB_BITMAP *)image_buffer;
-        int x = (width - pBBB->width)/2;
-        int y = (height - pBBB->height)/2; // center it
-        if (x > 0 || y > 0) // only clear if the image is smaller than the display
-        {
-            bbep.fillScreen(BBEP_WHITE);
-        }
-        bbep.loadG5Image(image_buffer, x, y, BBEP_WHITE, BBEP_BLACK);
-    }
-    else
-    {
-#ifdef BB_EPAPER
-        memcpy(bbep.getBuffer(), image_buffer+62, Imagesize); // uncompressed 1-bpp bitmap
-#endif
-    }
 
     bbep.setFont(nicoclean_8); //Roboto_20);
     bbep.setTextColor(BBEP_BLACK, BBEP_WHITE);
@@ -2823,13 +2693,12 @@ void display_show_msg(uint8_t *image_buffer, MSG message_type, String friendly_i
     case MAC_NOT_REGISTERED:
     {
         UWORD y_start = 340;
-        UWORD font_width = 18; // DEBUG
-        Paint_DrawMultilineText(0, y_start, message.c_str(), width, font_width, BBEP_BLACK, BBEP_WHITE,
-#if defined( BOARD_TRMNL_X ) || defined( BOARD_TRMNL_X_EPDIY ) || defined( BOARD_TRMNL_X_SENSORIAS3 ) || defined( BOARD_TRMNL_X_SENSORIAC5 ) || defined( BOARD_TRMNL_X_LILYGO ) || defined( BOARD_TRMNL_X_PAPERS3 )
-        Inter_18, true);
+#ifdef PARALLEL_EPD
+        const uint8_t *pFont = Inter_18;
 #else
-        nicoclean_8, true);
+        const uint8_t *pFont = nicoclean_8;
 #endif
+        Paint_DrawMultilineText(0, y_start, message.c_str(), width, BBEP_BLACK, BBEP_WHITE, pFont);
     }
     break;
     default:
