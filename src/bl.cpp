@@ -364,7 +364,11 @@ bool check_corners_gesture()
   Log_info("Hold edges slider mode: event=%d (HOLD=%d) left=%d right=%d", slider_event, IQS323_GESTURE_HOLD, left, right);
   return slider_event == IQS323_GESTURE_HOLD && left && right;
 }
+#endif // BOARD_TRMNL_X
 
+// Playlist browsing is shared: the TRMNL X touchbar and the EE04's Back/Next buttons
+// walk the same cached-image list.
+#if defined(BOARD_TRMNL_X) || EE04_HAS_MULTI_BUTTON
 static void update_playlist_order(const char *new_path, const char *prev_path) {
   String order = preferences.getString(PREFERENCES_PLAYLIST_ORDER_KEY, "");
   String newStr = String(new_path);
@@ -479,7 +483,9 @@ static void show_cached_image_by_offset(int offset) {
   DisplayedImage::remember(images[new_idx]);
   goToSleep();
 }
+#endif // BOARD_TRMNL_X || EE04_HAS_MULTI_BUTTON
 
+#ifdef BOARD_TRMNL_X
 void check_channel_states(void)
 {
   /* Loop through all the active channels */
@@ -673,6 +679,59 @@ void process_iqs323_data(void)
 
 #endif
 
+#if EE04_HAS_MULTI_BUTTON
+// ############################ MULTI-BUTTON ############################
+// Maps the TRMNL X touchbar gestures onto the EE04's three discrete buttons:
+//   Next  (KEY2/GPIO5) — browse the cached playlist forwards
+//   Back  (KEY0/GPIO2) — browse the cached playlist backwards
+//   Back + Next held together — Wi-Fi reset, confirmed by a second press while the
+//   confirmation screen is up (same two-step the touchbar uses for the corners)
+//   Middle (KEY1/GPIO3) — reserved, currently just wakes the device and refreshes
+#define EE04_RESET_CHORD ((1 << ButtonBack) | (1 << ButtonNext))
+#define EE04_CHORD_HOLD_MS BUTTON_HOLD_TIME
+#ifndef WIFI_RESET_CONFIRMATION_TIMEOUT_MS
+#define WIFI_RESET_CONFIRMATION_TIMEOUT_MS 15000
+#endif
+
+// Runs on a button wakeup. Returns true when the gesture already drove the display and
+// slept, so the caller skips the normal refresh cycle.
+static bool handle_ee04_buttons()
+{
+  ButtonHold hold;
+
+  // Both buttons down: Wi-Fi reset, pending confirmation. Wait for the chord to be
+  // released first, since we resume here straight from deep sleep.
+  if (read_buttons_mask() == EE04_RESET_CHORD) {
+    read_button_chord(EE04_RESET_CHORD, 0, &hold); // drain the initial hold
+    showMessageWithLogo(WIFI_RESET_CONFIRM);
+
+    ButtonHold confirm;
+    if (read_button_chord(EE04_RESET_CHORD, WIFI_RESET_CONFIRMATION_TIMEOUT_MS, &confirm) &&
+        confirm.duration_ms > EE04_CHORD_HOLD_MS) {
+      Log_info("EE04 WiFi reset confirmed (Back+Next)");
+      WifiCaptivePortal.resetSettings();
+    } else {
+      Log_info("EE04 WiFi reset cancelled");
+    }
+    return true;
+  }
+
+  // Single button. read_button_press() blocks for the hold and reports a second tap,
+  // so one physical press costs exactly one gesture.
+  const uint32_t timeout = (read_buttons_mask() == 0) ? 0 : BUTTON_MEDIUM_HOLD_TIME;
+  if (read_button_press(ButtonNext, timeout) != NoAction) {
+    show_cached_image_by_offset(+1);
+    return true;
+  }
+  if (read_button_press(ButtonBack, timeout) != NoAction) {
+    show_cached_image_by_offset(-1);
+    return true;
+  }
+  return false;
+}
+// ############################ MULTI-BUTTON ############################
+#endif // EE04_HAS_MULTI_BUTTON
+
 /**
  * @brief Function to init business logic module
  * @param none
@@ -759,6 +818,24 @@ void bl_init(void)
   Log_info("preferences end");
   #ifndef BOARD_TRMNL_X
   bool double_click = false;
+#if EE04_HAS_MULTI_BUTTON
+  if (gpio_wakeup)
+  {
+    Log_info("EE04 GPIO wakeup detected (%d)", wakeup_reason);
+    // handle_ee04_buttons() browses the cached playlist (and handles the Back+Next
+    // Wi-Fi reset) entirely from flash, going straight back to deep sleep. Only fall
+    // through to the normal refresh cycle when no button gesture applied.
+    if (handle_ee04_buttons()) {
+      return;
+    }
+    Log_info("EE04 wakeup had no button gesture, refreshing normally");
+  }
+  else
+  {
+    wait_for_serial();
+    Log_info("Non-GPIO wakeup (%d) -> didn't read buttons", wakeup_reason);
+  }
+#else
   if (gpio_wakeup)
   {
     Log_info("GPIO wakeup detected (%d)", wakeup_reason);
@@ -787,6 +864,7 @@ void bl_init(void)
     wait_for_serial();
     Log_info("Non-GPIO wakeup (%d) -> didn't read buttons", wakeup_reason);
   }
+#endif // EE04_HAS_MULTI_BUTTON
 #else // BOARD_TRMNL_X
   // Notify IQS323 task about wakeup type BEFORE starting the task
 
@@ -1489,7 +1567,7 @@ static https_request_err_e downloadAndShow()
       if (!_curPath.isEmpty() && (_curPath != String(szTemp) || _lastPath.isEmpty()))
         preferences.putString(PREFERENCES_LAST_PATH_KEY, _curPath);
       preferences.putString(PREFERENCES_CURRENT_PATH_KEY, String(szTemp));
-      #ifdef BOARD_TRMNL_X
+      #if defined(BOARD_TRMNL_X) || EE04_HAS_MULTI_BUTTON
       update_playlist_order(szTemp, _curPath.c_str());
       #endif
       preferences.putString(PREFERENCES_BROWSE_PATH_KEY, String(szTemp));
@@ -1558,7 +1636,7 @@ static https_request_err_e downloadAndShow()
     if (!_curPath.isEmpty() && (_curPath != String(szTemp) || _lastPath.isEmpty()))
       preferences.putString(PREFERENCES_LAST_PATH_KEY, _curPath);
     preferences.putString(PREFERENCES_CURRENT_PATH_KEY, String(szTemp));
-    #ifdef BOARD_TRMNL_X
+    #if defined(BOARD_TRMNL_X) || EE04_HAS_MULTI_BUTTON
     update_playlist_order(szTemp, _curPath.c_str());
     #endif
     preferences.putString(PREFERENCES_BROWSE_PATH_KEY, String(szTemp));
@@ -2286,6 +2364,16 @@ void goToSleep(void)
   config_gpio_for_lp();
 #endif
 
+#if EE04_HAS_MULTI_BUTTON
+  // The EE04 panel power gate (GPIO43) feeds the ePaper driver. Drop it before deep
+  // sleep so the panel isn't back-powered through its IO lines, which would both leak
+  // and risk the panel latching up on wake.
+  display_sleep();
+  pinMode(EE04_EPD_POWER_ENABLE_PIN, OUTPUT);
+  digitalWrite(EE04_EPD_POWER_ENABLE_PIN, LOW);
+  Log_info("EE04 ePaper power disabled (GPIO%d)", EE04_EPD_POWER_ENABLE_PIN);
+#endif
+
   filesystem_deinit();
   uint32_t time_to_sleep = refreshInterval.seconds();
   iPrevWakeTime = millis() - startup_time; // save for statistics
@@ -2305,12 +2393,19 @@ void goToSleep(void)
 #ifdef BOARD_TRMNL_X
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_INTERRUPT, 0);
 #else
+#if EE04_HAS_MULTI_BUTTON
+  // All three user buttons must wake the device, so ext0 (single pin) won't do. ANY_LOW
+  // wakes on whichever button goes down; ALL_LOW would require all of them at once.
+  uint64_t wake_mask = (1ULL << EE04_BUTTON_KEY0) | (1ULL << EE04_BUTTON_KEY1) | (1ULL << EE04_BUTTON_KEY2);
+  esp_sleep_enable_ext1_wakeup(wake_mask, ESP_EXT1_WAKEUP_ANY_LOW);
+#else
   esp_sleep_enable_ext0_wakeup((gpio_num_t)pDevice->interrupt_pin, 0);
-#endif
+#endif // EE04_HAS_MULTI_BUTTON
+#endif // BOARD_TRMNL_X
 #else
 #error "Unsupported ESP32 target for GPIO wakeup configuration"
 #endif
-#if defined( BOARD_XTEINK_X4 ) || defined ( BOARD_XTEINK_X3 ) 
+#if defined( BOARD_XTEINK_X4 ) || defined ( BOARD_XTEINK_X3 )
 // The Xteink X4 has a high current draw in deep sleep (3-4mA), so allow the user to select
 // if they want to completely shut down the power and only update with a physical button press
 // or have short battery life (5-7 days) in the normal TRMNL wakeup mode

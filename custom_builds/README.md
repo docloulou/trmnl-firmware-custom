@@ -21,8 +21,28 @@ Chaque dossier contient :
 | SPI SCK / MOSI | 7 / 9 |
 | CS / DC / RST / BUSY | 44 / 10 / 38 / 4 |
 | Alimentation écran (mise à l'état haut au démarrage) | 43 |
-| Bouton TRMNL (KEY2) | 5 |
+| Bouton KEY0 (retour / précédent) | 2 |
+| Bouton KEY1 (milieu, réservé) | 3 |
+| Bouton KEY2 (suivant) | 5 |
 | Batterie : ADC / activation de la mesure | 1 / 6 |
+
+## Les trois boutons
+
+Les trois boutons utilisateur sont utilisés comme sur la barre tactile du TRMNL X. Ils réveillent
+l'appareil depuis la veille profonde (les trois lignes sont des sources de réveil, pas seulement KEY2).
+
+| Geste | Effet |
+|---|---|
+| **KEY2** (suivant) | Affiche l'image suivante de la playlist en cache, puis se rendort |
+| **KEY0** (retour) | Affiche l'image précédente de la playlist en cache, puis se rendort |
+| **KEY0 + KEY2** maintenus | Affiche l'écran de confirmation, puis relance les deux boutons ensemble pendant 5 s pour effacer le Wi-Fi |
+| **KEY1** (milieu) | Réveil + rafraîchissement normal, aucune action dédiée pour l'instant |
+
+La navigation n'a d'effet que si la playlist a déjà été alimentée : le firmware mémorise l'ordre des
+images reçues du serveur au fur et à mesure des rafraîchissements, jusqu'à 30 images.
+
+Quand aucun geste n'est reconnu, l'appareil effectue un rafraîchissement normal (téléchargement de la
+nouvelle image), comme après un réveil automatique.
 
 ## Branchement de l'écran
 
@@ -60,11 +80,13 @@ Au premier démarrage (aucun Wi-Fi enregistré), l'écran affiche « Connect you
 4. Appuie sur « Connect ». L'appareil redémarre et contacte le serveur.
 
 Le portail reste ouvert 15 minutes. Passé ce délai, l'écran affiche « Wifi Captive Portal timed out »
-et la carte se met en veille : appuie sur le bouton (GPIO5) ou sur RESET pour relancer.
+et la carte se met en veille : appuie sur n'importe quel bouton utilisateur (GPIO2, GPIO3 ou GPIO5)
+ou sur RESET pour relancer.
 
-Pour revenir au portail plus tard (changer de Wi-Fi), maintiens le bouton GPIO5 enfoncé entre 5 et
-15 secondes pendant que la carte se réveille. Au-delà de 15 secondes, la carte efface aussi sa clé
-API et se réenregistre auprès du serveur.
+Pour revenir au portail plus tard (changer de Wi-Fi), maintiens **KEY0 (GPIO2) et KEY2 (GPIO5)
+enfoncés ensemble** pendant que la carte se réveille : l'écran de confirmation apparaît, puis il
+faut relâcher et maintenir à nouveau les deux boutons pendant 5 s pour confirmer. Voir
+« Les trois boutons » plus haut.
 
 Une fois configurée, la carte n'héberge plus de page web : elle dort entre deux rafraîchissements.
 Tout se règle ensuite côté serveur (trmnl.app ou BYOS).

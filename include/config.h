@@ -99,6 +99,20 @@
 #define FAKE_BATTERY_VOLTAGE
 #endif
 
+// XIAO ePaper Display Board EE04 (XIAO ESP32-S3 Plus). Three user buttons, all active LOW
+// with pull-ups: KEY0 = GPIO2 (back), KEY1 = GPIO3 (middle), KEY2 = GPIO5 (next). KEY2 doubles as
+// the TRMNL button (pDevice->interrupt_pin) so the existing single-button path keeps working.
+// GPIO43 gates the ePaper panel power and must stay HIGH while the panel is in use.
+#if defined(BOARD_XIAO_EPAPER_EE04)
+#define EE04_BUTTON_KEY0 2 // back  (left)
+#define EE04_BUTTON_KEY1 3 // middle
+#define EE04_BUTTON_KEY2 5 // next  (right) — also pDevice->interrupt_pin
+#define EE04_EPD_POWER_ENABLE_PIN 43
+#define EE04_HAS_MULTI_BUTTON true
+#else
+#define EE04_HAS_MULTI_BUTTON false
+#endif
+
 // DHCP hostname prefix (hyphens instead of spaces).
 #if defined(PARALLEL_EPD)
 #define WIFI_CLIENT_HOSTNAME_PREFIX "TRMNL-X"
